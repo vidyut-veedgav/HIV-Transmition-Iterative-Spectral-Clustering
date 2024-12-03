@@ -36,7 +36,7 @@ def load_monthly_graphs(input_dir='stable_hiv_contact_network'):
 monthly_graphs = load_monthly_graphs()
 
 
-def compute_shifted_laplacian(G, shift=0.01):
+def compute_shifted_laplacian(G, shift=2):
     L = nx.laplacian_matrix(G).astype(float)  # laplacian
     I = np.eye(len(G)) # identity
     return L + shift * I
@@ -44,6 +44,45 @@ def compute_shifted_laplacian(G, shift=0.01):
 
 from scipy.sparse.linalg import eigsh
 from sklearn.cluster import KMeans
+from scipy.linalg import svd
+
+def eigenapprox(C, U, k):
+    # U = y1y2T + y2y1T
+    # Want to find Q such that Ck + U = Q∆QT
+
+    # define U as Y1Y2^T + Y2Y1^T
+    Y1, Y2 = np.split(U, 2, axis=1)
+    U = Y1 @ Y2.T + Y2 @ Y1.T
+    
+    # deflate Y1 into the orthogonal space of Qk
+    Qk = C[:, :k]
+    Y1_deflated = (np.eye(Y1.shape[0]) - Qk @ Qk.T) @ Y1
+    
+    # xompute the SVD of Y1 after deflation and store the left singular vectors as P1
+    _, _, P1 = svd(Y1_deflated, full_matrices=False)
+    P1 = P1.T
+    
+    # deflate Y2 into the orthogonal space of both Qk and P1
+    Y2_deflated = (np.eye(Y2.shape[0]) - Qk @ Qk.T - P1 @ P1.T) @ Y2
+    _, _, P2 = svd(Y2_deflated, full_matrices=False)
+    P2 = P2.T
+    
+    # define the matrix Q as [Qk, P1, P2]
+    Q = np.hstack((Qk, P1, P2))
+    
+    # compute ∆ from the formula Ck + U = Q∆Q^T
+    Delta = Q.T @ (C + U) @ Q
+    
+    # compute the rank-k eigendecomposition of Delta
+    eigenvalues, eigenvectors = np.linalg.eig(Delta)
+    idx = eigenvalues.argsort()[::-1]
+    Hk = eigenvectors[:, idx[:k]]
+    pik = np.diag(eigenvalues[idx[:k]])
+    
+    # compute the final approximation
+    Q_Hk = Q @ Hk
+    return Q_Hk, pik
+
 
 def spectral_clustering(graphs, k, l, recompute_step):
     cluster_results = []
@@ -62,7 +101,7 @@ def spectral_clustering(graphs, k, l, recompute_step):
             # recompute evs and ews if it's time or no previous eigenvectors
             eigvals, eigvecs = eigsh(L_hat, k=l, which='LM')
         else:
-            # hmmm
+            # rank-l eigen-approx.
             eigvals, eigvecs = eigsh(L_hat, k=l, which='LM', v0=previous_eigvecs)
             eigvecs = update_eigenvectors(previous_eigvecs, eigvecs, l)
         

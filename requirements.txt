@@ -1,4 +1,7 @@
 pandas
 networkx
 numpy
+scipy
 ipykernel
+matplotlib
+scikit-klearn
